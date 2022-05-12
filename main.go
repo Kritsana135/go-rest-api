@@ -4,17 +4,42 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"net/http"
+
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
 )
 
+var db *gorm.DB
+
+type Handler struct {
+	db *gorm.DB
+}
+
+func newHandler(db *gorm.DB) *Handler {
+	return &Handler{db}
+}
+
 func main() {
-	gin.SetMode(gin.ReleaseMode)
+	// set mode for server
+	gin.SetMode(gin.DebugMode)
+
+	var err error
+	db, err = gorm.Open(sqlite.Open("test.db"), &gorm.Config{})
+
+	if err != nil {
+		panic("failed to connect database")
+	}
+
+	db.AutoMigrate(&Book{})
+
+	handler := newHandler(db)
 	r := gin.New()
 
 	r.GET("/ping", pong)
 
-	r.GET("/books", listBookHandler)
-	r.POST("/book", addBookHandler)
-	r.DELETE("/book/:id", removeBookHandler)
+	r.GET("/books", handler.listBookHandler)
+	r.POST("/book", handler.addBookHandler)
+	r.DELETE("/book/:id", handler.removeBookHandler)
 
 	r.Run()
 }
@@ -25,17 +50,20 @@ type Book struct {
 	Author string `json:"author"`
 }
 
-var books = []Book{
-	{ID: "1", Title: "เพราะเป็นวัยรุ่นจึงเจ็บปวด", Author: "คิมรันโด"},
-	{ID: "2", Title: "แค่โอบกอดตัวเองให้เป็น", Author: "คิดมาก"},
-	{ID: "3", Title: "นี่เราใช้ชีวิตยากเกินไปหรือเปล่านะ", Author: "ฮาวัน (Ha Wan)"},
-}
+func (h *Handler) listBookHandler(ctx *gin.Context) {
+	var books []Book
 
-func listBookHandler(ctx *gin.Context) {
+	if result := h.db.Find(&books); result.Error != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{
+			"error": result.Error.Error(),
+		})
+		return
+	}
+
 	ctx.JSON(http.StatusOK, books)
 }
 
-func addBookHandler(ctx *gin.Context) {
+func (h *Handler) addBookHandler(ctx *gin.Context) {
 	var book Book
 
 	if err := ctx.ShouldBindJSON(&book); err != nil {
@@ -45,19 +73,24 @@ func addBookHandler(ctx *gin.Context) {
 		return
 	}
 
-	books = append(books, book)
+	if result := h.db.Create(&book); result.Error != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{
+			"error": result.Error.Error(),
+		})
+		return
+	}
 
 	ctx.JSON(http.StatusCreated, book)
 }
 
-func removeBookHandler(ctx *gin.Context) {
+func (h *Handler) removeBookHandler(ctx *gin.Context) {
 	id := ctx.Param("id")
 
-	for i, a := range books {
-		if a.ID == id {
-			books = append(books[:i], books[i+1:]...)
-			break
-		}
+	if result := h.db.Delete(&Book{}, id); result.Error != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{
+			"error": result.Error.Error(),
+		})
+		return
 	}
 
 	ctx.Status(http.StatusNoContent)
